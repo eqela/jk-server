@@ -1,0 +1,13 @@
+{
+	vendorId "eqela"
+	projectId "jk-server"
+	title "JK Server"
+	description [[
+		A server-side development frameworks
+	]]
+	libraries [
+		"jk-core:0.37.0"
+		"jk-net:0.39.0"
+		"jk-db:0.21.0"
+	]
+}

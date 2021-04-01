@@ -1,0 +1,110 @@
+
+/*
+ * This file is part of Jkop
+ * Copyright (c) 2016-2021 J42 Pte Ltd
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+import jk.fs
+import jk.log
+import jk.template
+import jk.http.server
+import jk.http.server.fs
+import jk.server.web
+
+class is WebServer:
+
+property serverName as string
+{
+}
+
+property themeDirectory as dynamic
+{
+}
+
+property articleDirectory as dynamic
+{
+}
+
+var variables = new DynamicMap()
+
+func setVariable(key as string, value as string)
+{
+	if String.isNotEmpty(key):
+		variables.setString(key, value)
+}
+
+func configure(key as string, value as string, relativeTo as File, error as Error) override as bool
+{
+	if String.startsWith(key, "V") {
+		setVariable(String.getEndOfString(key, 1), value)
+		return true
+	}
+	return base.configure(key, value, relativeTo, error)
+}
+
+func initializeServer(server as HTTPServer) override as bool
+{
+	assert base.initializeServer(server)
+	server.setServerName(serverName)
+	var articleDir = File.asFile(articleDirectory)
+	assert articleDir && articleDir.isDirectory():
+		Log.error(ctx, "Invalid articleDirectory: `" .. String.asString(articleDirectory) .. "'")
+	var repository = assert ArticleRepositoryDirectory.forDirectory(ctx, articleDir):
+		Log.error(ctx, "Failed to create article repository for data directory: `" .. articleDir.getPath() .. "'")
+	var templateData = variables
+	var handler = ArticleWebHandler.forRepository(repository)
+	handler.setDefaultCategory("articles")
+	handler.setTemplateData(templateData)
+	var themeDir = File.asFile(themeDirectory)
+	assert themeDir && themeDir.isDirectory():
+		Log.error(ctx, "Invalid themeDirectory: `" .. String.asString(themeDirectory) .. "'")
+	handler.setTemplateStorage(TemplateStorageUsingFiles.forHTMLTemplateDirectory(themeDir))
+	server.pushRequestHandler(handler)
+	var themeStaticHandler = HTTPServerDirectoryHandler.forDirectory(themeDir)
+	themeStaticHandler.setTemplateData(templateData)
+	themeStaticHandler.setListDirectories(false)
+	themeStaticHandler.setProcessTemplateFiles(true)
+	themeStaticHandler.setIndexFiles([ "index.html", "index.html.t" ])
+	server.pushRequestHandler(themeStaticHandler)
+	server.pushRequestHandler(func(req as HTTPServerRequest, next as function) {
+		var nf = themeDir.entry("notfound.html.t")
+		var str = nf.getContentsUTF8()
+		if String.isNotEmpty(str) {
+			var dirs = new vector<File>
+			dirs += themeDir
+			var tt = TextTemplate.forHTMLString(str, dirs, null, ctx)
+			if tt {
+				var dd = new DynamicMap()
+				dd.mergeFrom(templateData)
+				var cc = tt.execute(dd)
+				if cc {
+					req.sendHTMLString(cc)
+					return
+				}
+			}
+		}
+		next()
+	})
+	return true
+}
+
+main:
+	return new this().executeMain(args)
