@@ -51,10 +51,14 @@ func execute(args as array<string>, worker as typeinfo) as int
 		Log.debug(ws.getCtx(), "No WEBSITE_CONTENT_DIRECTORY defined.")
 		var appdir = CommonPath.getAppDirectory()
 		if appdir {
-			contentDir = appdir.entry("wwwroot")
+			contentDir = appdir.entry("static")
 			if not contentDir.isDirectory() {
 				Log.debug(ws.getCtx(), "No content directory exists here: `" .. String.asString(contentDir) .. "'")
-				contentDir = null
+				contentDir = appdir.entry("wwwroot")
+				if not contentDir.isDirectory() {
+					Log.debug(ws.getCtx(), "No content directory exists here: `" .. String.asString(contentDir) .. "'")
+					contentDir = null
+				}
 			}
 		}
 		else {

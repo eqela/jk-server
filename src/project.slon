@@ -1,13 +1,13 @@
 {
-	vendorId "eqela"
+	namespace "eqela"
 	projectId "jk-server"
 	title "JK Server"
 	description [[
-		A server-side development frameworks
+		A server-side development framework
 	]]
 	libraries [
-		"jk-core:0.37.0"
-		"jk-net:0.39.0"
-		"jk-db:0.21.0"
+		"jk-core:0.40.0"
+		"jk-net:0.43.0"
+		"jk-db:0.22.0"
 	]
 }

@@ -1,4 +1,4 @@
-#! sushi ss-0.21
+#! sushi ss-0.25
 #
 # This file is part of Jkop
 # Copyright (c) 2016-2021 J42 Pte Ltd
@@ -22,6 +22,6 @@
 # SOFTWARE.
 #
 
-lib sling-tools:0.47.0
+lib sling-tools:0.59.0
 import sling.tools.compiler
 return SlingCompilerTool.forCrossPlatformLibraryDirectory().executeScript(args)
