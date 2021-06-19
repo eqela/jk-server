@@ -31,7 +31,9 @@ class is CommonServer:
 
 class MyHTTPServer is HTTPServer
 {
-	pvar myParent as parent
+	property myParent as parent
+	{
+	}
 
 	func onMaintenance override
 	{
@@ -47,17 +49,17 @@ var enableRequestLogging as bool
 var enableRateLimit as string
 var timeoutDelay as int
 var maintenanceTimerDelay as int
-var workers as WorkerPool
+var maxWorkerCount as int
+var maxWorkerQueue as int
 
 ctor
 {
-	workers = WorkerPool.forContext(ctx)
 	initConfigValue("ENABLE_REQUEST_LOGGING", "true")
 	initConfigValue("ENABLE_RATE_LIMIT", null)
 	initConfigValue("TIMEOUT_DELAY", "30")
 	initConfigValue("MAINTENANCE_TIMER_DELAY", "0")
-	initConfigValue("MAX_WORKER_COUNT", "200")
-	initConfigValue("MAX_WORKER_QUEUE", "1000")
+	initConfigValue("MAX_WORKER_COUNT", "256")
+	initConfigValue("MAX_WORKER_QUEUE", "1024")
 }
 
 func configure(key as string, value as string, relativeTo as File, error as Error) override as bool
@@ -71,66 +73,22 @@ func configure(key as string, value as string, relativeTo as File, error as Erro
 		return true
 	}
 	if key == "TIMEOUT_DELAY" || key == "timeoutDelay" {
-		timeoutDelay = Integer.asInteger(value)
-		if timeoutDelay < 30:
-			timeoutDelay = 30
+		timeoutDelay = Integer.asValue(value, 30)
 		return true
 	}
 	if key == "MAINTENANCE_TIMER_DELAY" || key == "maintenanceTimerDelay" {
-		maintenanceTimerDelay = Integer.asInteger(value)
-		if maintenanceTimerDelay < 0:
-			maintenanceTimerDelay = 0
+		maintenanceTimerDelay = Integer.asValue(value, 0)
 		return true
 	}
 	if key == "MAX_WORKER_COUNT" || key == "maxWorkerCount" {
-		workers.setMaxWorkers(Integer.asInteger(value))
+		maxWorkerCount = Integer.asValue(value, 256)
 		return true
 	}
 	if key == "MAX_WORKER_QUEUE" || key == "maxWorkerQueue" {
-		workers.setMaxQueue(Integer.asInteger(value))
+		maxWorkerQueue = Integer.asValue(value, 1024)
 		return true
 	}
 	return base.configure(key, value, relativeTo, error)
-}
-
-class WorkerRequestHandler is HTTPServerRequestHandler is HTTPServerComponent private
-{
-	pvar handler as function<void,HTTPServerRequest,function>
-	pvar worker as typeinfo
-
-	func getComponent private as HTTPServerComponent:
-		return Reflection.createClassInstanceByTypeinfo(worker) as HTTPServerComponent
-
-	func handleRequest(req as HTTPServerRequest, next as function):
-		handler(req, next)
-
-	func initialize(server as HTTPServerBase)
-	{
-		var cc = getComponent()
-		if cc:
-			cc.initialize(server)
-	}
-
-	func onMaintenance
-	{
-		var cc = getComponent()
-		if cc:
-			cc.onMaintenance()
-	}
-
-	func onRefresh
-	{
-		var cc = getComponent()
-		if cc:
-			cc.onRefresh()
-	}
-
-	func cleanup
-	{
-		var cc = getComponent()
-		if cc:
-			cc.cleanup()
-	}
 }
 
 func initializeHandlers(server as HTTPServer) virtual
@@ -138,13 +96,17 @@ func initializeHandlers(server as HTTPServer) virtual
 	if handler:
 		server.pushRequestHandler(handler)
 	if worker:
-		server.pushRequestHandler(new WorkerRequestHandler().setWorker(worker).setHandler(func(req as HTTPServerRequest, next as function) {
-			handleRequestWithWorker(req, worker)
-		}))
+		server.pushRequestHandler(HTTPServerRequestHandlerForWorker.forWorker(worker))
 }
 
 func initializeServer(server as HTTPServer) virtual as bool
 {
+	var workers = WorkerPool.forContext(ctx)
+	if workers {
+		workers.setMaxWorkers(maxWorkerCount)
+		workers.setMaxQueue(maxWorkerQueue)
+		server.workerPool = workers
+	}
 	if String.isNotEmpty(enableRateLimit) {
 		var limit = new HTTPServerRateLimitHandler()
 		if enableRateLimit == "true" || enableRateLimit == "yes" {
@@ -176,30 +138,11 @@ func initializeNetworkServer(server as NetworkServer) override as bool
 func createServer override as NetworkServer
 {
 	var server = new MyHTTPServer()
-	server.setTimeoutDelay(timeoutDelay)
-	server.setMaintenanceTimerDelay(maintenanceTimerDelay)
-	server.setMyParent(this)
-	server.setPort(getListenPort())
+	server.port = getListenPort()
+	server.timeoutDelay = timeoutDelay
+	server.maintenanceTimerDelay = maintenanceTimerDelay
+	server.myParent = this
 	return server
-}
-
-func handleRequestWithWorker(req as HTTPServerRequest, worker as typeinfo)
-{
-	assert req
-	var fulldata as buffer
-	workers.executeWorker(worker, req.toMyPacket(), func(data as buffer, size as int) {
-		if not data {
-			if not fulldata {
-				req.sendResponse(HTTPServerResponse.forHTTPInternalError())
-			}
-			else {
-				req.sendResponse(HTTPServerResponse.forMyPacket(fulldata))
-			}
-		}
-		else {
-			fulldata = Buffer.append(fulldata, data, size)
-		}
-	})
 }
 
 func executeForHandler(handler as HTTPServerRequestHandler, args as array<string>) as int

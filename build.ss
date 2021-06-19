@@ -22,6 +22,6 @@
 # SOFTWARE.
 #
 
-lib sling-tools:0.59.0
+lib sling-tools:0.63.0
 import sling.tools.compiler
 return SlingCompilerTool.forSushiLibraryDirectory().executeScript(args)

@@ -1,0 +1,311 @@
+
+/*
+ * This file is part of Jkop
+ * Copyright (c) 2016-2021 J42 Pte Ltd
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+import jk.env
+import jk.log
+import jk.url
+import jk.jwt
+import jk.json
+import jk.slon
+import jk.worker
+import jk.http.server
+import jk.http.client
+import jk.http.worker
+import jk.http.server.cookie
+
+class is HTTPServerRequestHandler:
+
+func forEnvironment(ctx as LoggingContext) static as this
+{
+	var issuerBaseUrl = EnvConfig.requireString("OIDC_ISSUER_BASE_URL")
+	var applicationBaseUrl = EnvConfig.requireString("OIDC_APPLICATION_BASE_URL")
+	var applicationSecret = EnvConfig.requireString("OIDC_APPLICATION_SECRET")
+	var clientId = EnvConfig.requireString("OIDC_CLIENT_ID")
+	var clientSecret = EnvConfig.requireString("OIDC_CLIENT_SECRET")
+	var loginFailedUrl = EnvConfig.requireString("OIDC_LOGIN_FAILED_URL")
+	var loginSuccessfulUrl = EnvConfig.requireString("OIDC_LOGIN_SUCCESSFUL_URL")
+	var v = new this()
+	v.ctx = ctx
+	v.issuerBaseUrl = issuerBaseUrl
+	v.applicationBaseUrl = applicationBaseUrl
+	v.applicationSecret = applicationSecret
+	v.clientId = clientId
+	v.clientSecret = clientSecret
+	v.loginFailedUrl = loginFailedUrl
+	v.loginSuccessfulUrl = loginSuccessfulUrl
+	var sessionTimeoutSeconds = EnvConfig.getString("OIDC_SESSION_TIMEOUT")
+	if sessionTimeoutSeconds:
+		v.sessionTimeoutSeconds = String.toInteger(sessionTimeoutSeconds)
+	v.initialize()
+	return v
+}
+
+property ctx as LoggingContext
+{
+}
+
+property issuerBaseUrl as string
+{
+}
+
+property applicationBaseUrl as string
+{
+}
+
+property applicationSecret as string
+{
+}
+
+property clientId as string
+{
+}
+
+property clientSecret as string
+{
+}
+
+property cookieName as string = "webAppSession"
+{
+}
+
+property loginFailedUrl as string
+{
+}
+
+property loginSuccessfulUrl as string
+{
+}
+
+property sessionTimeoutSeconds as int = 3600
+{
+}
+
+var oidcConfiguration as OidcConfiguration
+
+func getOpenidConfiguration private as OidcConfiguration
+{
+	if String.isEmpty(issuerBaseUrl):
+		Error.throw("valueMissing", "issuerBaseUrl")
+	var url = issuerBaseUrl .. "/.well-known/openid-configuration"
+	Log.status(ctx, "Retrieving OpenID configuration: `" .. url .. "' .. ")
+	var response = new CustomWebClient().querySync("GET", url, null, null)
+	Log.status(ctx, null)
+	if not response:
+		Error.throw("failedToQueryUrl", url)
+	if String.equals(response.status, "200") == false:
+		Error.throw("failedToGetOpenIdConfiguration", String.forUTF8Buffer(response.body))
+	var str = String.forUTF8Buffer(response.body)
+	if String.isEmpty(str):
+		Error.throw("noResponseBody", url)
+	var data = JSONParser.parseString(str) as DynamicMap
+	if not data:
+		Error.throw("invalidOidcConfiguration", str)
+	return OidcConfiguration.forData(data)
+}
+
+func initialize
+{
+	oidcConfiguration = getOpenidConfiguration()
+	Log.debug(ctx, "OIDC configuration: `" .. SLONEncoder.toString(oidcConfiguration.toDynamicMap()) .. "'")
+}
+
+func getCookieFromRequest(req as HTTPServerRequest) private as string
+{
+	var v = req.getCookieValue(cookieName)
+	if v:
+		return v
+	var v0 = req.getCookieValue(cookieName .. ".0")
+	if not v0:
+		return null
+	var sb = new StringBuilder()
+	sb.appendString(v0)
+	var n = 1
+	loop {
+		var vn = req.getCookieValue(cookieName .. "." .. String.forInteger(n))
+		if not vn:
+			break
+		sb.appendString(vn)
+		n++
+	}
+	return sb.toString()
+}
+
+model MyOidcHandlerSettings #dynamic
+{
+	clientId as string
+	clientSecret as string
+	scope as string
+	redirectUri as string
+	authorizationEndpointUrl as string
+	tokenEndpointUrl as string
+	loginFailedUrl as string
+	loginSuccessfulUrl as string
+	applicationSecret as string
+	cookieName as string
+	sessionTimeoutSeconds as int
+}
+
+func getOidcHandlerSettings private as MyOidcHandlerSettings
+{
+	if not oidcConfiguration:
+		Error.throw("noOidcConfiguration", null)
+	var v = new MyOidcHandlerSettings()
+	v.clientId = clientId
+	v.clientSecret = clientSecret
+	v.scope = "openid profile email"
+	v.redirectUri = applicationBaseUrl .. "/.oidc/callback"
+	v.authorizationEndpointUrl = oidcConfiguration.authorization_endpoint
+	v.tokenEndpointUrl = oidcConfiguration.token_endpoint
+	v.loginFailedUrl = loginFailedUrl
+	v.loginSuccessfulUrl = loginSuccessfulUrl
+	v.applicationSecret = applicationSecret
+	v.cookieName = cookieName
+	v.sessionTimeoutSeconds = sessionTimeoutSeconds
+	return v
+}
+
+model TokenResponse #dynamic
+{
+	access_token as string
+	token_type as string
+	expires_in as int
+	scope as string
+	refresh_token as string
+	id_token as string
+}
+
+class MyCallbackWorker is HTTPWorkerHandler
+{
+	func handleRequest(req as HTTPWorkerRequest, resp as HTTPWorkerResponse) override
+	{
+		var oidc = MyOidcHandlerSettings.forData(JSONParser.parseString(req.getUserData()) as DynamicMap)
+		var code = req.getQueryParameter("code")
+		if String.isEmpty(code) {
+			Log.debug(getCtx(), "Callback URL received no code: Login failed.")
+			resp.setRedirect(oidc.loginFailedUrl)
+			return
+		}
+		var data = new map<string,string>
+		Map.set(data, "client_id", oidc.clientId)
+		Map.set(data, "client_secret", oidc.clientSecret)
+		Map.set(data, "scope", oidc.scope)
+		Map.set(data, "code", code)
+		Map.set(data, "redirect_uri", oidc.redirectUri)
+		Map.set(data, "grant_type", "authorization_code")
+		var qs = QueryString.encode(data)
+		var hdrs = new KeyValueList<string,string>
+		hdrs.add("Content-Type", "application/x-www-form-urlencoded")
+		var response = new CustomWebClient().querySync("POST", oidc.tokenEndpointUrl, hdrs, String.toUTF8Buffer(qs))
+		if not response {
+			Log.debug(getCtx(), "Token exchange URL call failed: Login failed.")
+			resp.setRedirect(oidc.loginFailedUrl)
+			return
+		}
+		if response.status != "200" {
+			Log.debug(getCtx(), "Token exchange URL call return error status " .. response.status .. "': Login failed.")
+			resp.setRedirect(oidc.loginFailedUrl)
+			return
+		}
+		var tr = TokenResponse.forData(JSONParser.parseBuffer(response.body) as DynamicMap)
+		Log.debug(getCtx(), "Token response: `" .. SLONEncoder.toString(tr.toDynamicMap()) .. "'")
+		var idToken = tr.id_token
+		if String.isEmpty(idToken) {
+			Log.debug(getCtx(), "No ID token received. Login failed.")
+			resp.setRedirect(oidc.loginFailedUrl)
+			return
+		}
+		var idContent = JWT.decode(idToken, null)
+		if not idContent {
+			Log.debug(getCtx(), "Invalid ID token received. Login failed.")
+			resp.setRedirect(oidc.loginFailedUrl)
+			return
+		}
+		var encryptedString = CipherHelper.forSecret(oidc.applicationSecret).encrypt(JSONEncoder.toCompactString(idContent.getClaims()))
+		var cookie = HTTPServerCookie.forKeyValue(oidc.cookieName, encryptedString)
+		cookie.setMaxAge(oidc.sessionTimeoutSeconds)
+		cookie.setPath("/")
+		cookie.setSecure(true)
+		cookie.setHttpOnly(true)
+		cookie.setSameSite("lax")
+		resp.setStatus("303")
+		resp.addHeader("Location", oidc.loginSuccessfulUrl)
+		resp.addHeader("Set-Cookie", cookie.toString())
+		resp.setResponseText("")
+	}
+}
+
+class MyLogoutWorker is HTTPWorkerHandler
+{
+	func handleRequest(req as HTTPWorkerRequest, resp as HTTPWorkerResponse) override
+	{
+		resp.setStatus("200")
+		resp.setResponseText("LOGOUT!")
+	}
+}
+
+func handleRequest(req as HTTPServerRequest, next as function)
+{
+	req.removeHeader("x-user-info")
+	if req.isForResource("/.oidc/logout") {
+		req.handleWithWorker(typeinfo MyLogoutWorker, String.asString(getOidcHandlerSettings()))
+		return
+	}
+	if req.isForResource("/.oidc/callback") {
+		req.handleWithWorker(typeinfo MyCallbackWorker, String.asString(getOidcHandlerSettings()))
+		return
+	}
+	var cookie = getCookieFromRequest(req)
+	if String.isNotEmpty(cookie) {
+		var cookieString = CipherHelper.forSecret(applicationSecret).decrypt(cookie)
+		var cookieData = JSONParser.parseString(cookieString) as DynamicMap
+		if cookieData {
+			req.addHeader("x-user-info", cookieString)
+		}
+		else {
+			cookie = null
+		}
+	}
+	if String.isEmpty(cookie) {
+		var oidc = getOidcHandlerSettings()
+		var url = URL.forString(oidcConfiguration.authorization_endpoint)
+		if not url:
+			Error.throw("invalidOidcAuthorizationEndpoint", oidc.authorizationEndpointUrl)
+		url.addQueryParameter("scope", oidc.scope)
+		url.addQueryParameter("response_type", "code")
+		url.addQueryParameter("response_mode", "query")
+		url.addQueryParameter("client_id", oidc.clientId)
+		url.addQueryParameter("redirect_uri", oidc.redirectUri)
+		req.sendRedirect(url.toString())
+		return
+	}
+	// This will renew the cookie expiration.
+	var cc = HTTPServerCookie.forKeyValue(cookieName, cookie)
+	cc.setMaxAge(sessionTimeoutSeconds)
+	cc.setPath("/")
+	cc.setSecure(true)
+	cc.setHttpOnly(true)
+	cc.setSameSite("lax")
+	req.addResponseCookie(cc)
+	next()
+}

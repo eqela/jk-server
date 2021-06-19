@@ -30,7 +30,9 @@ class is CommonServer abstract:
 
 class MyWSServer is WSServer
 {
-	pvar myParent as parent
+	property myParent as parent
+	{
+	}
 
 	func onMaintenance override
 	{
@@ -47,9 +49,7 @@ ctor:
 func configure(key as string, value as string, relativeTo as File, error as Error) override as bool
 {
 	if key == "MAINTENANCE_TIMER_DELAY" || key == "maintenanceTimerDelay" {
-		maintenanceTimerDelay = Integer.asInteger(value)
-		if maintenanceTimerDelay < 0:
-			maintenanceTimerDelay = 0
+		maintenanceTimerDelay = Integer.asValue(value, 0)
 		return true
 	}
 	return base.configure(key, value, relativeTo, error)
@@ -71,9 +71,9 @@ func initializeNetworkServer(server as NetworkServer) override as bool
 func createServer override as NetworkServer
 {
 	var server = new MyWSServer()
-	server.setMaintenanceTimerDelay(maintenanceTimerDelay)
-	server.setMyParent(this)
-	server.setPort(getListenPort())
+	server.port = getListenPort()
+	server.maintenanceTimerDelay = maintenanceTimerDelay
+	server.myParent = this
 	server.setCreateConnectionHandlerObject(func as WSServerConnectionHandler {
 		return createConnectionHandler()
 	})

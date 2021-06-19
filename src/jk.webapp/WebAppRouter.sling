@@ -1,0 +1,98 @@
+
+/*
+ * This file is part of Jkop
+ * Copyright (c) 2016-2021 J42 Pte Ltd
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+import jk.env
+import jk.log
+import jk.json
+import jk.http.worker
+import jk.http.server
+
+class is HTTPWorkerRouter is HTTPServerComponent:
+
+func initializeWebApp virtual:
+	nop
+
+func initialize(server as HTTPServerBase):
+	initializeWebApp()
+
+func onMaintenance:
+	nop
+
+func onRefresh:
+	nop
+
+func cleanup virtual
+{
+}
+
+func redirect(resp as HTTPWorkerResponse, url as string)
+{
+	resp.setStatus("303")
+	resp.addHeader("Location", url)
+	resp.setBody(String.toUTF8Buffer(url))
+}
+
+func sendHtml(resp as HTTPWorkerResponse, html as string)
+{
+	resp.setStatus("200")
+	resp.setResponseHtml(html)
+}
+
+func handleQuery(req as HTTPWorkerRequest, resp as HTTPWorkerResponse, handler as function)
+{
+	try {
+		handler()
+	}
+	catch e {
+		Log.error(getCtx(), String.asString(e))
+		var status = "500"
+		var r = new DynamicMap()
+		r.setString("status", "error")
+		if e is WebAppException {
+			var wax = e as! WebAppException
+			status = wax.httpStatus
+			r.setString("error", wax.errorCode)
+			r.setString("detail", wax.errorDetail)
+		}
+		else {
+			r.setString("error", "operationFailed")
+			r.setString("detail", "")
+		}
+		resp.setStatus(status)
+		resp.setBody(String.toUTF8Buffer(JSONEncoder.toString(r)))
+	}
+}
+
+func handleQueryWithSession(req as HTTPWorkerRequest, resp as HTTPWorkerResponse, handler as function<void,DynamicMap>)
+{
+	handleQuery(req, resp, func {
+		var userInfo = req.getHeaderValue("x-user-info")
+		if String.isEmpty(userInfo):
+			Error.throw("noUserInfo", null)
+		var userInfoData = JSONParser.parseString(userInfo) as DynamicMap
+		if not userInfoData:
+			Error.throw("invalidUserInfo", userInfo)
+		handler(userInfoData)
+	})
+}

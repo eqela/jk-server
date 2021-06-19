@@ -75,7 +75,7 @@ func getServerName as string
 	if serverName:
 		return serverName
 	var server = assert getServer()
-	return server.getServerName()
+	return server.serverName
 }
 
 func getDirectoryEntries(dir as File, allEntries as vector<string>, dirs as vector<string>, files as vector<string>)

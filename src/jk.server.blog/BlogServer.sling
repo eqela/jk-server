@@ -63,7 +63,7 @@ func configure(key as string, value as string, relativeTo as File, error as Erro
 func initializeServer(server as HTTPServer) override as bool
 {
 	assert base.initializeServer(server)
-	server.setServerName(serverName)
+	server.serverName = serverName
 	var articleDir = File.asFile(articleDirectory)
 	assert articleDir && articleDir.isDirectory():
 		Log.error(ctx, "Invalid articleDirectory: `" .. String.asString(articleDirectory) .. "'")
