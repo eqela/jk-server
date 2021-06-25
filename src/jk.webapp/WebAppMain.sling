@@ -41,11 +41,11 @@ property processTemplatesInContentDirectory as bool = true
 
 func pushAuthenticationHandler(ctx as LoggingContext, stack as HTTPServerRequestHandlerStack)
 {
-	var allowDummySession = Boolean.asBoolean(EnvironmentVariable.get("DUMMY_SESSION"))
-	if allowDummySession {
+	var authenticator = EnvConfig.getString("WEBAPP_AUTHENTICATOR")
+	if String.equalsIgnoreCase(authenticator, "DUMMY") {
 		stack.pushRequestHandler(DummyAuthenticator.forEnvironment(ctx))
 	}
-	else if String.equalsIgnoreCase(EnvConfig.getString("WEBAPP_AUTHENTICATOR"), "OIDC") {
+	else if String.equalsIgnoreCase(authenticator, "OIDC") {
 		var oidc = OidcAuthenticator.forEnvironment(ctx)
 		if oidc:
 			stack.pushRequestHandler(oidc)

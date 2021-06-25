@@ -59,31 +59,10 @@ func initialize
 	Log.debug(ctx, "Dummy authentication enabled")
 }
 
-func getCookieFromRequest(req as HTTPServerRequest) private as string
-{
-	var v = req.getCookieValue(cookieName)
-	if v:
-		return v
-	var v0 = req.getCookieValue(cookieName .. ".0")
-	if not v0:
-		return null
-	var sb = new StringBuilder()
-	sb.appendString(v0)
-	var n = 1
-	loop {
-		var vn = req.getCookieValue(cookieName .. "." .. String.forInteger(n))
-		if not vn:
-			break
-		sb.appendString(vn)
-		n++
-	}
-	return sb.toString()
-}
-
 func handleRequest(req as HTTPServerRequest, next as function)
 {
 	req.removeHeader("x-user-info")
-	var cookie = getCookieFromRequest(req)
+	var cookie = req.getCookieValue(cookieName)
 	if String.isNotEmpty(cookie) {
 		req.addHeader("x-user-info", generateDummyData())
 	}
@@ -104,6 +83,7 @@ func handleRequest(req as HTTPServerRequest, next as function)
 func generateDummyData as string
 {
 	var dummyData = new DynamicMap()
+	dummyData.setString("oid", "dummy")
 	dummyData.setString("name", "dummmy")
 	dummyData.setString("email", "dummmy")
 	return JSONEncoder.toCompactString(dummyData)
