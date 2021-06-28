@@ -24,6 +24,7 @@
 
 import jk.env
 import jk.json
+import jk.generator
 import jk.log
 import jk.url
 import jk.worker
@@ -64,7 +65,13 @@ func handleRequest(req as HTTPServerRequest, next as function)
 	req.removeHeader("x-user-info")
 	var cookie = req.getCookieValue(cookieName)
 	if String.isNotEmpty(cookie) {
-		req.addHeader("x-user-info", generateDummyData())
+		var cookieData = JSONParser.parseString(cookie) as DynamicMap
+		if cookieData {
+			req.addHeader("x-user-info", cookie)
+		}
+		else {
+			cookie = null
+		}
 	}
 	if String.isEmpty(cookie) {
 		cookie = generateDummyData()
@@ -83,8 +90,8 @@ func handleRequest(req as HTTPServerRequest, next as function)
 func generateDummyData as string
 {
 	var dummyData = new DynamicMap()
-	dummyData.setString("oid", "dummy")
+	dummyData.setString("oid", DataGenerator.generateCodeOrId(64, false, false))
 	dummyData.setString("name", "dummmy")
-	dummyData.setString("email", "dummmy")
+	dummyData.setString("email", "dummmy@gmail.com")
 	return JSONEncoder.toCompactString(dummyData)
 }
