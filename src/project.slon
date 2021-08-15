@@ -6,8 +6,8 @@
 		A server-side development framework
 	]]
 	libraries [
-		"jk-core:0.42.0"
-		"jk-net:0.46.0"
-		"jk-db:0.22.0"
+		"jk-core:0.43.0"
+		"jk-net:0.50.0"
+		"jk-db:0.23.0"
 	]
 }

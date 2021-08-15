@@ -65,8 +65,10 @@ func pushContentDirectoryHandler(ctx as LoggingContext, stack as HTTPServerReque
 		var appdir = CommonPath.getAppDirectory()
 		if appdir {
 			contentDir = appdir.entry("static")
+			if not contentDir.isDirectory():
+				contentDir = appdir.entry("resources").entry("static")
 			if not contentDir.isDirectory() {
-				Log.debug(ctx, "No content directory exists here: `" .. String.asString(contentDir) .. "'")
+				Log.debug(ctx, "No content directory exists here: `" .. String.asString(appdir) .. "'")
 				contentDir = null
 			}
 		}
