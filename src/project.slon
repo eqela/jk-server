@@ -7,7 +7,7 @@
 	]]
 	libraries [
 		"jk-core:0.43.0"
-		"jk-net:0.50.0"
-		"jk-db:0.23.0"
+		"jk-net:0.50.1"
+		"jk-db:0.23.1"
 	]
 }
